@@ -28,9 +28,9 @@ from adafruit_display_text.label import Label                           # fancy 
 
 from adafruit_lc709203f import LC709203F, PackSize                      # battery voltage
 
-#import adafruit_touchscreen                                             # capacitive capture
-#import audiomp3                                                         # audio mp3
-#import audioio                                                          # audio
+import adafruit_touchscreen                                             # capacitive capture
+import audiomp3                                                         # audio mp3
+import audioio                                                          # audio
 
 print("I AM ALIVE:", str(time.monotonic()))
 
@@ -46,6 +46,7 @@ def log(*msg):
 STATUS_LIGHT_BRIGHTNESS = 0.3
 SLEEP_INTERVAL          = 10
 BATTERY_PACK_SIZE       = PackSize.MAH2000
+LAST_RUNTIME            = 0
 
 #######################
 # Hardware Init
@@ -61,46 +62,15 @@ STATUS_LIGHT   = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=STATUS_LIGHT_BR
 LIGHT_SENSOR   = analogio.AnalogIn(board.LIGHT)
 DISPLAY        = board.DISPLAY
 
-#try:
-#    VOLTAGE_SENSOR = LC709203F(board.I2C())
-#except Exception as e:
-#    log("Voltage Sensor Error:", e)
-#    pass
-
-#try:
-#    VOLTAGE_SENSOR.pack_size = BATTERY_PACK_SIZE
-#except NameError:
-#    log("Voltage Sensor not found")
-#    pass
-
-# currently disabled
-#I2C_BUS        = busio.I2C(board.SCL, board.SDA)
-#TEMP_SENSOR    = adafruit_adt7410.ADT7410(I2C_BUS, address=0x48)
-#TEMP_SENSOR.high_resolution = True
-
 #######################
 # Mode Toggles
 #######################
 
-AUDIO_BOOT      = False
-POWER_SAVE      = False
-NETWORK_ENABLED = True
 DEBUG           = False
 
 #######################
 # Display
 #######################
-
-# rate at which to refresh the pyportal screen, in seconds
-#PYPORTAL_REFRESH = 10
-
-# Set the background color
-#BACKGROUND_COLOR = 0x443355
-
-# initialize rotation
-#display.rotation=90
-#display.rotation=180
-#display.rotation=270
 
 # display groups
 splash = displayio.Group()
@@ -122,20 +92,20 @@ requests.set_socket(socket, ESP)
 # Touchscreen Init
 #######################
 
-#touchscreen = adafruit_touchscreen.Touchscreen(
-#    board.TOUCH_XL,
-#    board.TOUCH_XR,
-#    board.TOUCH_YD,
-#    board.TOUCH_YU,
-#    size=(board.DISPLAY.width, board.DISPLAY.height),
-#)
+touchscreen = adafruit_touchscreen.Touchscreen(
+    board.TOUCH_XL,
+    board.TOUCH_XR,
+    board.TOUCH_YD,
+    board.TOUCH_YU,
+    size=(board.DISPLAY.width, board.DISPLAY.height),
+)
 
 #######################
 # Fonts and Labels
 #######################
 
-cwd = ("/"+__file__).rsplit('/', 1)[0]
-big_font = bitmap_font.load_font(cwd+"/fonts/Nunito-Light-75.bdf")
+cwd                    = ("/"+__file__).rsplit('/', 1)[0]
+big_font               = bitmap_font.load_font(cwd+"/fonts/Nunito-Light-75.bdf")
 big_font.load_glyphs(b'0123456789:')
 
 # label positions and colors
@@ -183,37 +153,25 @@ bg_blue_dark           = displayio.TileGrid(color_bitmap, pixel_shader=colorp_bl
 bg_blue_light          = displayio.TileGrid(color_bitmap, pixel_shader=colorp_blue_light,   x=0, y=0)
 
 #######################
-# Conditional Init
+# Secrets Init
 #######################
 
-if AUDIO_BOOT:
-	speaker_enable = digitalio.DigitalInOut(board.SPEAKER_ENABLE)
-	speaker_enable.switch_to_output(value=True)
-	data           = open("siren.mp3", "rb")
-	mp3            = audiomp3.MP3Decoder(data)
-	a              = audioio.AudioOut(board.A0)
-
-	a.play(mp3)
-	while a.playing:
-	  pass
-
-	speaker_enable.switch_to_output(value=False)
-
-# connect to wifi if network is enabled
-if NETWORK_ENABLED:
-    try:
-        from secrets import secrets
-    except ImportError:
-        log("failed to import secrets.py")
-        raise
+try:
+    from secrets import secrets
+except ImportError:
+    log("failed to import secrets.py")
+    raise
 
 #######################
 # Metrics Init
 #######################
 
-influxdb_path = secrets["influx_write_path"] + "?db=" + secrets["influx_database"]
-influxdb_url  = secrets["influx_scheme"] + "://" + secrets["influx_host"] + ":" + secrets["influx_port"] + influxdb_path
-location      = secrets["sensor_location"]
+influxdb_path   = secrets["influx_write_path"] + "?db=" + secrets["influx_database"]
+influxdb_url    = secrets["influx_scheme"] + "://" + secrets["influx_host"] + ":" + secrets["influx_port"] + influxdb_path
+location        = secrets["sensor_location"]
+influx_database = "db=sensors"
+influx_query    = "&q=SELECT LAST(temperature_f) FROM weather WHERE location='outside' AND time >= now() - 30m"
+influxdb_q_url  = "http://192.168.1.230:8090/query?" + influx_database + influx_query
 
 #######################
 # Functions
@@ -237,25 +195,36 @@ def UpdateBacklightOnLightValue():
     elif val <= 65535:
         set_backlight(1)    # flashlight directly on sensor
 
+def SwitchTextColor():
+    if textarea.color == 0xFFFFFF:
+        textarea.color = 0x000000
+    else:
+        textarea.color = 0xFFFFFF
+
 def UpdateDisplay(temperature):
     while bg_group:
         bg_group.pop()
-        textarea.color = 0xFFFFFF
     if temperature < 0:        # Daisy needs boots
         bg_group.append(bg_purple_dark)
+        textarea.color = 0xFFFFFF
     elif temperature < 20:     # Daisy needs foot wax
         bg_group.append(bg_purple_light)
+        textarea.color = 0xFFFFFF
     elif temperature < 40:     # Daisy needs a coat
         bg_group.append(bg_blue_dark)
+        textarea.color = 0xFFFFFF
     elif temperature < 65:     # Ryan needs a coat
         bg_group.append(bg_blue_light)
+        textarea.color = 0x000000
     elif temperature < 80:     # Ryan needs shorts
         bg_group.append(bg_yellow)
         textarea.color = 0x000000
     elif temperature < 120:    # Ryan needs suntan lotion
         bg_group.append(bg_red)
+        textarea.color = 0xFFFFFF
     else:
         bg_group.append(bg_black)
+        textarea.color = 0xFFFFFF
 
     textarea.text = str(temperature)
 
@@ -301,13 +270,18 @@ def connect():
 
 connect()
 
-influxdb_url = "http://192.168.1.230:8090/query?db=sensors&q=SELECT LAST(temperature_f) FROM weather WHERE location='outside' AND time >= now() - 30m"
-
 #######################
 # Main Loop
 #######################
 
 while True:
+    #touched = touchscreen.touch_point
+    #if touched:
+    #    SwitchTextColor()
+    ## check the internal timer to see if we should run again
+    #if (time.monotonic() - LAST_RUNTIME) >= SLEEP_INTERVAL:
+    #    LAST_RUNTIME = time.monotonic()
+
     # update backlight based on light sensor
     if DEBUG:
         print((LIGHT_SENSOR.value,))
@@ -318,7 +292,7 @@ while True:
         connect()
 
     try:
-        response = requests.post(influxdb_url)
+        response = requests.post(influxdb_q_url)
     except Exception as e:
         log("POST request failed", e)
         time.sleep(SLEEP_INTERVAL)
@@ -326,26 +300,6 @@ while True:
 
     if response._received_length == 0:
         log("POST response had zero (0) length")
-        # after further investigation the response object
-        # once this is reached the request has the same underlying unique ID more than once, meaning it never updates
-        #[ 175344.0 ]:  ('POST response had zero (0) length, skipping',)
-        #[ 175404.0 ]:  ('POST request failed', ValueError('invalid syntax for integer with base 16',))
-        #[ 175584.0 ]:  ('POST request failed', ValueError('invalid syntax for integer with base 16',))
-        #[ 175764.0 ]:  ('POST request failed', ValueError('invalid syntax for integer with base 16',))
-        # if you try to close it, it crashes
-        #response.close()
-        # deleting has no effect
-        #log("Deleting response object")
-        #del response
-        # disconnecting and reconnecting has no effect
-        #log("Disconnecting wifi")
-        #ESP.disconnect
-        #log("Attemping wifi reconnect")
-        #connect()
-        # forcing garbage collection has no effect
-        #gc.collect()
-        # upgraded from 1.5.0 to 1.7.4
-        # reset the device -- final attempt
         supervisor.reload()
         continue
 
@@ -356,9 +310,6 @@ while True:
         response.close()
         time.sleep(SLEEP_INTERVAL)
         continue
-
-    #if DEBUG:
-    #    log(json_data)
 
     # get value
     temperature = math.floor(json_data["results"][0]["series"][0]["values"][0][1])
@@ -373,41 +324,10 @@ while True:
     del response
     del json_data
 
-    # collect voltage
-    #battery_voltage = ""
-    #try:
-    #    battery_voltage = "{:.2f}".format(VOLTAGE_SENSOR.cell_voltage)
-    #except NameError:
-    #    # sensor not found
-    #    pass
-    #except Exception as e:
-    #    log("Unable to read battery voltage:", e)
-    #    pass
-
-    #if battery_voltage != "":
-    #    # Define sensors
-    #    measurements = {
-    #        "battery": {
-    #            "voltage": battery_voltage
-    #        }
-    #    }
-
-    #    # Update each measurement
-    #    for measurement, mapping in measurements.items():
-    #        for field, value in mapping.items():
-    #            payload = "%s,location=%s %s=%s\n" % (measurement, location, field, value)
-    #            data += payload
-
-    #    try:
-    #        requests.post(influxdb_url, data=data)
-    #    except Exception as e:
-    #        log("Influx HTTP POST failed", e)
-    #        pass
-
     # garbage collect
     gc.collect()
 
-    # sleep interval
+    # sleep
     time.sleep(SLEEP_INTERVAL)
 
 #######################
