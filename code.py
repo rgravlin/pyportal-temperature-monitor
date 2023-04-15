@@ -6,7 +6,7 @@
 import gc                                                               # garbage colletor
 import supervisor                                                       # system management
 
-import math
+import math                                                             # maths
 import time                                                             # timing
 import board                                                            # base
 import busio                                                            # serial protocols
@@ -124,15 +124,19 @@ splash.append(textarea)
 # Background Colors
 #######################
 
+color_black            = 0x000000
+color_white            = 0xFFFFFF
 color_bitmap           = displayio.Bitmap(320, 240, 1)
 colorp_black           = displayio.Palette(1)
+colorp_white           = displayio.Palette(1)
 colorp_red             = displayio.Palette(1)
 colorp_yellow          = displayio.Palette(1)
 colorp_purple_dark     = displayio.Palette(1)
 colorp_purple_light    = displayio.Palette(1)
 colorp_blue_dark       = displayio.Palette(1)
 colorp_blue_light      = displayio.Palette(1)
-colorp_black[0]        = 0x000000
+colorp_black[0]        = color_black
+colorp_white[0]        = color_white
 colorp_red[0]          = 0xEF0808
 colorp_purple_dark[0]  = 0x6008A1
 colorp_purple_light[0] = 0xC990F3
@@ -145,6 +149,7 @@ colorp_yellow[0]       = 0xEFFF00
 #######################
 
 bg_black               = displayio.TileGrid(color_bitmap, pixel_shader=colorp_black,        x=0, y=0)
+bg_white               = displayio.TileGrid(color_bitmap, pixel_shader=colorp_white,        x=0, y=0)
 bg_red                 = displayio.TileGrid(color_bitmap, pixel_shader=colorp_red,          x=0, y=0)
 bg_yellow              = displayio.TileGrid(color_bitmap, pixel_shader=colorp_yellow,       x=0, y=0)
 bg_purple_dark         = displayio.TileGrid(color_bitmap, pixel_shader=colorp_purple_dark,  x=0, y=0)
@@ -166,12 +171,11 @@ except ImportError:
 # Metrics Init
 #######################
 
-influxdb_path   = secrets["influx_write_path"] + "?db=" + secrets["influx_database"]
-influxdb_url    = secrets["influx_scheme"] + "://" + secrets["influx_host"] + ":" + secrets["influx_port"] + influxdb_path
-location        = secrets["sensor_location"]
-influx_database = "db=sensors"
-influx_query    = "&q=SELECT LAST(temperature_f) FROM weather WHERE location='outside' AND time >= now() - 30m"
-influxdb_q_url  = "http://192.168.1.230:8090/query?" + influx_database + influx_query
+influxdb_query    = "SELECT LAST(temperature_f) FROM weather WHERE location='outside' AND time >= now() - 30m"
+
+influxdb_path     = secrets["influx_query_path"] + "?db=" + secrets["influx_database"]
+influxdb_base_url = secrets["influx_scheme"] + "://" + secrets["influx_host"] + ":" + secrets["influx_port"] + influxdb_path
+influxdb_url      = influxdb_base_url + "&q=" + influxdb_query
 
 #######################
 # Functions
@@ -196,35 +200,46 @@ def UpdateBacklightOnLightValue():
         set_backlight(1)    # flashlight directly on sensor
 
 def SwitchTextColor():
-    if textarea.color == 0xFFFFFF:
-        textarea.color = 0x000000
+    if textarea.color == color_white:
+        textarea.color = color_black
     else:
-        textarea.color = 0xFFFFFF
+        textarea.color = color_white
 
 def UpdateDisplay(temperature):
+
     while bg_group:
         bg_group.pop()
     if temperature < 0:        # Daisy needs boots
         bg_group.append(bg_purple_dark)
-        textarea.color = 0xFFFFFF
+        textarea.color = color_white
+        textarea.scale = 3
     elif temperature < 20:     # Daisy needs foot wax
         bg_group.append(bg_purple_light)
-        textarea.color = 0xFFFFFF
+        textarea.color = color_white
+        textarea.scale = 3
     elif temperature < 40:     # Daisy needs a coat
         bg_group.append(bg_blue_dark)
-        textarea.color = 0xFFFFFF
+        textarea.color = color_white
+        textarea.scale = 3
     elif temperature < 65:     # Ryan needs a coat
         bg_group.append(bg_blue_light)
-        textarea.color = 0x000000
+        textarea.color = color_black
+        textarea.scale = 3
     elif temperature < 80:     # Ryan needs shorts
         bg_group.append(bg_yellow)
-        textarea.color = 0x000000
-    elif temperature < 120:    # Ryan needs suntan lotion
+        textarea.color = color_black
+        textarea.scale = 3
+    elif temperature < 200:    # Ryan needs suntan lotion
         bg_group.append(bg_red)
-        textarea.color = 0xFFFFFF
+        textarea.color = color_white
+        textarea.scale = 2
+    elif temperature < 500:    # Ryan needs underground bunker
+        bg_group.append(bg_white)
+        textarea.color = color_black
+        textarea.scale = 2
     else:
         bg_group.append(bg_black)
-        textarea.color = 0xFFFFFF
+        textarea.color = color_white
 
     textarea.text = str(temperature)
 
@@ -275,34 +290,35 @@ connect()
 #######################
 
 while True:
-    #touched = touchscreen.touch_point
-    #if touched:
-    #    SwitchTextColor()
-    ## check the internal timer to see if we should run again
-    #if (time.monotonic() - LAST_RUNTIME) >= SLEEP_INTERVAL:
-    #    LAST_RUNTIME = time.monotonic()
-
     # update backlight based on light sensor
-    if DEBUG:
-        print((LIGHT_SENSOR.value,))
-
     UpdateBacklightOnLightValue()
 
+    # ensure we reconnect to wifi
     if not ESP.is_connected:
         connect()
 
+    # attempt query with exception handling
     try:
-        response = requests.post(influxdb_q_url)
+        response = requests.post(influxdb_url)\
+    # this exception is sometimes unrecoverable
+    except RuntimeError as re:
+        # ('ESP32 unknown status:', 6)
+        # ('POST request RunTimeError', RuntimeError('Sending request failed',))
+        log("POST request RunTimeError", re)
+        supervisor.reload()
+        continue
     except Exception as e:
         log("POST request failed", e)
         time.sleep(SLEEP_INTERVAL)
         continue
 
+    # this condition was unrecoverable before an ESP32 firmware upgrade to 1.7.4
     if response._received_length == 0:
         log("POST response had zero (0) length")
         supervisor.reload()
         continue
 
+    # attempt json parsing
     try:
         json_data = response.json()
     except Exception as e:
