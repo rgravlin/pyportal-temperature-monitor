@@ -229,6 +229,10 @@ def UpdateDisplay(temperature):
         bg_group.append(bg_yellow)
         textarea.color = color_black
         textarea.scale = 3
+    elif temperature < 100:     # Display needs 2 digits
+        bg_group.append(bg_red)
+        textarea.color = color_white
+        textarea.scale = 3
     elif temperature < 200:    # Ryan needs suntan lotion
         bg_group.append(bg_red)
         textarea.color = color_white
@@ -257,23 +261,23 @@ def go_to_sleep(sleep_period):
 
 def connect():
     if ESP.status == adafruit_esp32spi.WL_CONNECTED:
-        log("ESP32 found and already connected, exiting")
+        log("ESP32 found connected, exiting!")
         return
     elif ESP.status == adafruit_esp32spi.WL_IDLE_STATUS:
-        log("ESP32 found and in idle mode, continuing")
+        log("ESP32 found idle!")
     else:
-        log("ESP32 unknown status:", ESP.status)
+        log("ESP32 unknown status", ESP.status)
         return
 
-    log("Firmware version:", ESP.firmware_version)
+    log("ESP Firmware version:", ESP.firmware_version)
     log("MAC address:", [hex(i) for i in ESP.MAC_address])
+    log("Connecting to AP", secrets["ssid"])
 
-    log("Connecting to AP")
     while not ESP.is_connected:
         try:
             ESP.connect_AP(secrets["ssid"], secrets["password"])
         except OSError as e:
-            log("Could not connect to AP, retrying:", e)
+            log("Could not connect to AP, retrying", e)
             continue
 
     log("Connected to:", str(ESP.ssid, "utf-8"), "RSSI:", ESP.rssi)
