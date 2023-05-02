@@ -62,11 +62,14 @@ STATUS_LIGHT   = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=STATUS_LIGHT_BR
 LIGHT_SENSOR   = analogio.AnalogIn(board.LIGHT)
 DISPLAY        = board.DISPLAY
 
+log("ESP Firmware version:", ESP.firmware_version)
+
 #######################
 # Mode Toggles
 #######################
 
 DEBUG           = False
+DEMO_MODE       = False
 
 #######################
 # Display
@@ -138,7 +141,7 @@ colorp_blue_light      = displayio.Palette(1)
 colorp_black[0]        = color_black
 colorp_white[0]        = color_white
 colorp_red[0]          = 0xEF0808
-colorp_purple_dark[0]  = 0x6008A1
+colorp_purple_dark[0]  = 0xB2008D
 colorp_purple_light[0] = 0xC990F3
 colorp_blue_dark[0]    = 0x180AEE
 colorp_blue_light[0]   = 0x90E3FF
@@ -209,13 +212,17 @@ def UpdateDisplay(temperature):
 
     while bg_group:
         bg_group.pop()
-    if temperature < 0:        # Daisy needs boots
+    if temperature < -9:       # Scale to two (2)
+        bg_group.append(bg_purple_dark)
+        textarea.color = color_white
+        textarea.scale = 2
+    elif temperature < 0:        # Daisy needs boots
         bg_group.append(bg_purple_dark)
         textarea.color = color_white
         textarea.scale = 3
     elif temperature < 20:     # Daisy needs foot wax
         bg_group.append(bg_purple_light)
-        textarea.color = color_white
+        textarea.color = color_black
         textarea.scale = 3
     elif temperature < 40:     # Daisy needs a coat
         bg_group.append(bg_blue_dark)
@@ -267,9 +274,9 @@ def connect():
         log("ESP32 found idle!")
     else:
         log("ESP32 unknown status", ESP.status)
+        supervisor.reload()
         return
 
-    log("ESP Firmware version:", ESP.firmware_version)
     log("MAC address:", [hex(i) for i in ESP.MAC_address])
     log("Connecting to AP", secrets["ssid"])
 
@@ -287,6 +294,13 @@ def connect():
 # Main Init
 #######################
 
+if DEMO_MODE:
+    points = [ -15, 15, 35, 55, 75, 95, 105, 150, 400 ]
+    while True:
+        for point in points:
+            UpdateDisplay(point)
+            time.sleep(SLEEP_INTERVAL)
+
 connect()
 
 #######################
@@ -303,14 +317,7 @@ while True:
 
     # attempt query with exception handling
     try:
-        response = requests.post(influxdb_url)\
-    # this exception is sometimes unrecoverable
-    except RuntimeError as re:
-        # ('ESP32 unknown status:', 6)
-        # ('POST request RunTimeError', RuntimeError('Sending request failed',))
-        log("POST request RunTimeError", re)
-        supervisor.reload()
-        continue
+        response = requests.post(influxdb_url)
     except Exception as e:
         log("POST request failed", e)
         time.sleep(SLEEP_INTERVAL)
@@ -355,3 +362,4 @@ while True:
 #######################
 
 print("I AM SLAIN:", str(time.monotonic()))
+
